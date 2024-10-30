@@ -220,11 +220,12 @@ namespace{
 
 		FString PluginDir = IPluginManager::Get().FindPlugin(FString("Edgegap"))->GetBaseDir();
 		FString DockerFilePath = FPaths::Combine(PluginDir, FString("Dockerfile"));
+		FString StartScriptPath = FPaths::Combine(PluginDir, FString("StartServer.sh"));
 		FString ServerBuildPath = PlatformsSettings->StagingDirectory.Path;
 		ServerBuildPath = FPaths::Combine(ServerBuildPath, FString("LinuxServer"));
 
 
-		AsyncTask(ENamedThreads::GameThread, [DockerFilePath, ServerBuildPath] {
+		AsyncTask(ENamedThreads::GameThread, [DockerFilePath, StartScriptPath, ServerBuildPath] {
 
 			const UEdgegapSettings* EdgegapSettings = GetDefault<UEdgegapSettings>();
 
@@ -236,7 +237,7 @@ namespace{
 			const FString _PrivateRegistryUsername = EdgegapSettings->PrivateRegistryUsername;
 			const FString _PrivateRegistryToken = EdgegapSettings->PrivateRegistryToken;
 
-			FEdgegapSettingsDetails::Containerize(DockerFilePath, ServerBuildPath, _Registry, _ImageRepository, _Tag, _PrivateRegistryUsername, _PrivateRegistryToken);
+			FEdgegapSettingsDetails::Containerize(DockerFilePath, StartScriptPath, ServerBuildPath, _Registry, _ImageRepository, _Tag, _PrivateRegistryUsername, _PrivateRegistryToken);
 		});
 
 	}
@@ -598,28 +599,6 @@ void FEdgegapSettingsDetails::CustomizeDetails(IDetailLayoutBuilder& DetailBuild
 		]
 	];
 
-	// Documentation Button
-
-	HiddenCategory.AddCustomRow(FText::GetEmpty())
-		.WholeRowContent()
-		.HAlign(EHorizontalAlignment::HAlign_Center)
-		[
-			SNew(SHorizontalBox)
-			+ SHorizontalBox::Slot()
-		.AutoWidth()
-		.VAlign(VAlign_Center)
-		.HAlign(EHorizontalAlignment::HAlign_Center)
-		.Padding(25)
-		[
-			SNew(SButton)
-			.Text(FText::FromString("Documentation"))
-			.OnClicked(FOnClicked::CreateLambda([this]() {
-				FPlatformProcess::LaunchURL(TEXT("https://docs.edgegap.com/docs/tools-and-integrations/unreal-engine-plugin"), NULL, NULL);
-				return(FReply::Handled());
-			}))
-		]
-	];
-
 	// Hides the category
 	HiddenCategory.SetDisplayName(FText::GetEmpty());
 
@@ -871,39 +850,57 @@ void FEdgegapSettingsDetails::CustomizeDetails(IDetailLayoutBuilder& DetailBuild
 	[
 		SNew(SHorizontalBox)
 		+ SHorizontalBox::Slot()
-		.FillWidth(1.0f)
 		[
 			SNew(SVerticalBox)
 			+ SVerticalBox::Slot()
-			.AutoHeight()
-			.HAlign(HAlign_Center)
-			.Padding(10.f)
-		[
-			SNew(SHorizontalBox)
-			+ SHorizontalBox::Slot()
-				.AutoWidth()
-				.VAlign(VAlign_Bottom)
+				.AutoHeight()
+				.HAlign(HAlign_Center)
+				.Padding(10.f)
 				[
-					SNew(STextBlock)
-					.Font(IDetailLayoutBuilder::GetDetailFontBold())
-					.AutoWrapText(true)
-					.Text(LOCTEXT("Ad", "Need more than one game server?"))
+					SNew(SHorizontalBox)
+					+ SHorizontalBox::Slot()
+						.AutoWidth()
+						.VAlign(VAlign_Bottom)
+						[
+							SNew(STextBlock)
+							.Font(IDetailLayoutBuilder::GetDetailFontBold())
+							.AutoWrapText(true)
+							.Text(LOCTEXT("Ad", "Need more than one game server?"))
+						]
 				]
-		]
-		+ SVerticalBox::Slot()
-			.AutoHeight()
-			.HAlign(HAlign_Center)
-			.Padding(10.f, 0.f, 10.f, 10.f)
-			[
-				SNew(SButton)
-				.Text(LOCTEXT("ClickHere", "Click here!"))
-				.ForegroundColor(BlueSlateColor)
-				.OnClicked_Lambda([this]()
-				{
-					FPlatformProcess::LaunchURL(TEXT("https://app.edgegap.com/user-settings?tab=memberships"), NULL, NULL);
-					return(FReply::Handled());
-				})
-			]
+			+ SVerticalBox::Slot()
+				.AutoHeight()
+				.HAlign(HAlign_Center)
+				.Padding(10.f, 0.f, 10.f, 10.f)
+				[
+					SNew(SHorizontalBox)
+					+ SHorizontalBox::Slot()
+						.AutoWidth()
+						.VAlign(VAlign_Bottom)
+						.Padding(2)
+						[
+							SNew(SButton)
+							.Text(FText::FromString("Documentation"))
+							.OnClicked(FOnClicked::CreateLambda([this]() {
+								FPlatformProcess::LaunchURL(TEXT("https://docs.edgegap.com/docs/category/unreal"), NULL, NULL);
+								return(FReply::Handled());
+							}))
+						]
+					+ SHorizontalBox::Slot()
+						.AutoWidth()
+						.VAlign(VAlign_Bottom)
+						.Padding(2)
+						[
+							SNew(SButton)
+							.Text(LOCTEXT("ClickHere", "Click here!"))
+							.ForegroundColor(BlueSlateColor)
+							.OnClicked_Lambda([this]()
+							{
+								FPlatformProcess::LaunchURL(TEXT("https://app.edgegap.com/user-settings?tab=memberships"), NULL, NULL);
+								return(FReply::Handled());
+							})
+						]
+				]
 		]
 	];
 
@@ -1200,9 +1197,10 @@ void FEdgegapSettingsDetails::AddMessageLog(const FText& Text, const FText& Deta
 	MessageLog.Open();
 }
 
-void FEdgegapSettingsDetails::Containerize(FString DockerFilePath, FString ServerBuildPath, FString RegistryURL, FString ImageRepository,  FString Tag, FString PrivateUsername, FString PrivateToken)
+void FEdgegapSettingsDetails::Containerize(FString DockerFilePath, FString StartScriptPath, FString ServerBuildPath, FString RegistryURL, FString ImageRepository,  FString Tag, FString PrivateUsername, FString PrivateToken)
 {
 	const UEdgegapSettings* EdgegapSettings = GetDefault<UEdgegapSettings>();
+	const UGeneralProjectSettings& ProjectSettings = *GetDefault<UGeneralProjectSettings>();
 
 	_PrivateUsername = PrivateUsername;
 	_PrivateToken= PrivateToken;
@@ -1216,16 +1214,19 @@ void FEdgegapSettingsDetails::Containerize(FString DockerFilePath, FString Serve
 
 	FString PathToServerBuild = FPaths::Combine(PlatformsSettings->StagingDirectory.Path, FString("LinuxServer"));
 
+	FString DockerFileContent;
 	FString NewDockerFilePath = FPaths::Combine(ServerBuildPath, FPaths::GetCleanFilename(DockerFilePath));
 	IPlatformFile::GetPlatformPhysical().CopyFile(*NewDockerFilePath, *DockerFilePath);
-	
-	FString DockerFileContent;
 	FFileHelper::LoadFileToString(DockerFileContent, *NewDockerFilePath);
-	
-	const UGeneralProjectSettings& ProjectSettings = *GetDefault<UGeneralProjectSettings>();
-
 	DockerFileContent = DockerFileContent.Replace(*FString("<PROJECT_NAME>"), FApp::GetProjectName());
 	FFileHelper::SaveStringToFile(DockerFileContent, *NewDockerFilePath);
+
+	FString StartScriptContent;
+	FString NewStartScriptPath = FPaths::Combine(ServerBuildPath, FPaths::GetCleanFilename(StartScriptPath));
+	IPlatformFile::GetPlatformPhysical().CopyFile(*NewStartScriptPath, *StartScriptPath);
+	FFileHelper::LoadFileToString(StartScriptContent, *NewStartScriptPath);
+	StartScriptContent = StartScriptContent.Replace(*FString("<PROJECT_NAME>"), FApp::GetProjectName());
+	FFileHelper::SaveStringToFile(StartScriptContent, *NewStartScriptPath);
 
 	FString CommandLine = FString::Printf(TEXT("docker build -t \"%s\" \"%s\""), *_ImageName, *ServerBuildPath);
 	UE_LOG(EdgegapLog, Log, TEXT("%s"), *CommandLine);
@@ -1618,7 +1619,7 @@ void FEdgegapSettingsDetails::CreateVersion(FString AppName, FString VersionName
 	_AppName = AppName;
 	_VersionName = VersionName;
 
-	const FString ComposedRepository = FString::Printf(TEXT("%s/%s"), *ImageRepository, *AppName);
+	const FString ComposedRepository = FString::Printf(TEXT("%s/%s"), *ImageRepository, *AppName.ToLower());
 
 	const FString endpoint = FString::Printf(TEXT("v1/app/%s/version"), *AppName);
 
@@ -1664,17 +1665,18 @@ void FEdgegapSettingsDetails::CreateVersion(FString AppName, FString VersionName
 	JsonWriter->WriteValue("max_duration", 60);
 	JsonWriter->WriteValue("time_to_deploy", 120);
 	JsonWriter->WriteValue("use_telemetry", false);
-	JsonWriter->WriteValue("inject_context_env", false);
+	JsonWriter->WriteValue("inject_context_env", true);
 	JsonWriter->WriteValue("force_cache", false);
 	JsonWriter->WriteValue("whitelisting_active", false);
 
 	JsonWriter->WriteArrayStart(TEXT("ports"));
 	JsonWriter->WriteObjectStart();
 
-	JsonWriter->WriteValue("port", 7777);
+	JsonWriter->WriteValue("port", 0);
 	JsonWriter->WriteValue("protocol", TEXT("TCP/UDP"));
 	JsonWriter->WriteValue("to_check", false);
 	JsonWriter->WriteValue("tls_upgrade", false);
+	JsonWriter->WriteValue("name", TEXT("gameport"));
 
 	JsonWriter->WriteObjectEnd();
 	JsonWriter->WriteArrayEnd();
@@ -2038,9 +2040,9 @@ void FEdgegapSettingsDetails::Request_GetDeploymentsInfo(FString API_key, TShare
 
 			if (auto ports_obj = deployment->AsObject()->GetObjectField("ports"))
 			{
-				if (auto obj_field_7777 = ports_obj->GetObjectField("7777"))
+				if (auto obj_field_gameport = ports_obj->GetObjectField("gameport"))
 				{
-					link = ports_obj->GetObjectField("7777")->GetStringField("link");
+					link = ports_obj->GetObjectField("gameport")->GetStringField("link");
 				}
 			}
 

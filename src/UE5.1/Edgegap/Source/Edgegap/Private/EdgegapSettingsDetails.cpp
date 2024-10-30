@@ -208,11 +208,13 @@ namespace{
 
 		FString PluginDir = IPluginManager::Get().FindPlugin(FString("Edgegap"))->GetBaseDir();
 		FString DockerFilePath = FPaths::Combine(PluginDir, FString("Dockerfile"));
+		FString StartScriptPath = FPaths::Combine(PluginDir, FString("StartServer.sh"));
 		FString ServerBuildPath = PackagingSettings->StagingDirectory.Path;
 		ServerBuildPath = FPaths::Combine(ServerBuildPath, FString("LinuxServer"));
 
-		AsyncTask(ENamedThreads::GameThread, [Settings, DockerFilePath, ServerBuildPath] {FEdgegapSettingsDetails::Containerize(DockerFilePath, ServerBuildPath, Settings->Registry, Settings->ImageRepository, Settings->Tag, Settings->PrivateRegistryUsername, Settings->PrivateRegistryToken); });
-
+		AsyncTask(ENamedThreads::GameThread, [Settings, DockerFilePath, StartScriptPath, ServerBuildPath] {
+			FEdgegapSettingsDetails::Containerize(DockerFilePath, StartScriptPath, ServerBuildPath, Settings->Registry, Settings->ImageRepository, Settings->Tag, Settings->PrivateRegistryUsername, Settings->PrivateRegistryToken); 
+		});
 	}
 
 	void OnDockerLoginCallback(FString res, double num)
@@ -457,12 +459,33 @@ void FEdgegapSettingsDetails::CustomizeDetails(IDetailLayoutBuilder& DetailBuild
 	IDetailCategoryBuilder& VersionCategoryBuilder = DetailBuilder.EditCategory("Version");
 	IDetailCategoryBuilder& ContainerCategoryBuilder = DetailBuilder.EditCategory("Container");
 	IDetailCategoryBuilder& DeploymentStatusCategoryBuilder = DetailBuilder.EditCategory("Deployments");
-
+	IDetailCategoryBuilder& DocumentationCategoryBuilder = DetailBuilder.EditCategory("Documentation");
 
 	Add_API_UI(DetailBuilder);
 	AddAppInfoUI(DetailBuilder);
 	AddContainerUI(DetailBuilder);
 	AddDeploymentStatusTableUI(DetailBuilder);
+	Add_Documentation_UI(DetailBuilder);
+}
+
+void FEdgegapSettingsDetails::Add_Documentation_UI(IDetailLayoutBuilder& DetailBuilder)
+{
+	IDetailCategoryBuilder& DocumentationCategoryBuilder = DetailBuilder.EditCategory("Documentation");
+		DocumentationCategoryBuilder.AddCustomRow(LOCTEXT("Documentation", "Documentation"))
+		.WholeRowContent()
+		.HAlign(EHorizontalAlignment::HAlign_Center)
+		[
+			SNew(SHorizontalBox)+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).HAlign(EHorizontalAlignment::HAlign_Left)
+			[
+				SAssignNew(StartUploadyButton, SButton).Text(LOCTEXT("Documentation", "Documentation")).OnClicked_Lambda(
+					[this]()
+					{
+						FPlatformProcess::LaunchURL(TEXT("https://docs.edgegap.com/docs/category/unreal"), NULL, NULL);
+						return(FReply::Handled());
+					}
+				)
+			]
+		];
 }
 
 void FEdgegapSettingsDetails::Add_API_UI(IDetailLayoutBuilder& DetailBuilder)
@@ -878,8 +901,10 @@ void FEdgegapSettingsDetails::AddMessageLog(const FText& Text, const FText& Deta
 	MessageLog.Open();
 }
 
-void FEdgegapSettingsDetails::Containerize(FString DockerFilePath, FString ServerBuildPath, FString RegistryURL, FString ImageRepository,  FString Tag, FString PrivateUsername, FString PrivateToken)
+void FEdgegapSettingsDetails::Containerize(FString DockerFilePath, FString StartScriptPath, FString ServerBuildPath, FString RegistryURL, FString ImageRepository,  FString Tag, FString PrivateUsername, FString PrivateToken)
 {
+	const UGeneralProjectSettings& ProjectSettings = *GetDefault<UGeneralProjectSettings>();
+
 	_PrivateUsername = PrivateUsername;
 	_PrivateToken= PrivateToken;
 	_RegistryURL = RegistryURL;
@@ -889,16 +914,19 @@ void FEdgegapSettingsDetails::Containerize(FString DockerFilePath, FString Serve
 	
 	FString PathToServerBuild = FPaths::Combine(PackagingSettings->StagingDirectory.Path, FString("LinuxServer"));
 	
+	FString DockerFileContent;
 	FString NewDockerFilePath = FPaths::Combine(ServerBuildPath, FPaths::GetCleanFilename(DockerFilePath));
 	IPlatformFile::GetPlatformPhysical().CopyFile(*NewDockerFilePath, *DockerFilePath);
-	
-	FString DockerFileContent;
 	FFileHelper::LoadFileToString(DockerFileContent, *NewDockerFilePath);
-	
-	const UGeneralProjectSettings& ProjectSettings = *GetDefault<UGeneralProjectSettings>();
-
 	DockerFileContent = DockerFileContent.Replace(*FString("<PROJECT_NAME>"), FApp::GetProjectName());
 	FFileHelper::SaveStringToFile(DockerFileContent, *NewDockerFilePath);
+
+	FString StartScriptContent;
+	FString NewStartScriptPath = FPaths::Combine(ServerBuildPath, FPaths::GetCleanFilename(StartScriptPath));
+	IPlatformFile::GetPlatformPhysical().CopyFile(*NewStartScriptPath, *StartScriptPath);
+	FFileHelper::LoadFileToString(StartScriptContent, *NewStartScriptPath);
+	StartScriptContent = StartScriptContent.Replace(*FString("<PROJECT_NAME>"), FApp::GetProjectName());
+	FFileHelper::SaveStringToFile(StartScriptContent, *NewStartScriptPath);
 
 	FString CommandLine = FString::Printf(TEXT("docker build -t \"%s\" \"%s\""), *_ImageName, *ServerBuildPath);
 	UE_LOG(EdgegapLog, Log, TEXT("%s"), *CommandLine);
@@ -1059,24 +1087,18 @@ void FEdgegapSettingsDetails::CreateVersion(FString AppName, FString VersionName
 	JsonWriter->WriteValue("max_duration", 60);
 	JsonWriter->WriteValue("time_to_deploy", 120);
 	JsonWriter->WriteValue("use_telemetry", false);
-	JsonWriter->WriteValue("inject_context_env", false);
+	JsonWriter->WriteValue("inject_context_env", true);
 	JsonWriter->WriteValue("force_cache", false);
 	JsonWriter->WriteValue("whitelisting_active", false);
-
-	JsonWriter->WriteObjectStart(TEXT("session_config"));
-	JsonWriter->WriteValue("kind", TEXT("Match"));
-	JsonWriter->WriteValue("session_max_duration", 60);
-	JsonWriter->WriteValue("autodeploy", false);
-	JsonWriter->WriteValue("sockets", 10);
-	JsonWriter->WriteObjectEnd();
 
 	JsonWriter->WriteArrayStart(TEXT("ports"));
 	JsonWriter->WriteObjectStart();
 
-	JsonWriter->WriteValue("port", 7777);
+	JsonWriter->WriteValue("port", 0);
 	JsonWriter->WriteValue("protocol", TEXT("TCP/UDP"));
 	JsonWriter->WriteValue("to_check", false);
 	JsonWriter->WriteValue("tls_upgrade", false);
+	JsonWriter->WriteValue("name", TEXT("gameport"));
 
 	JsonWriter->WriteObjectEnd();
 	JsonWriter->WriteArrayEnd();
@@ -1281,7 +1303,7 @@ void FEdgegapSettingsDetails::onGetDeploymentsInfo(FHttpRequestPtr RequestPtr, F
 
 	for (auto deployment : JsonValue->AsObject()->GetArrayField("data"))
 	{
-		FString link = deployment->AsObject()->GetObjectField("ports")->GetObjectField("7777")->GetStringField("link");
+		FString link = deployment->AsObject()->GetObjectField("ports")->GetObjectField("gameport")->GetStringField("link");
 		FString RequestID = deployment->AsObject()->GetStringField("request_id");
 		FString Status = deployment->AsObject()->GetStringField("status");
 		bool bReady = deployment->AsObject()->GetBoolField("ready");

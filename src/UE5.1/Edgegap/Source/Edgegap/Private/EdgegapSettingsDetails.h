@@ -70,6 +70,7 @@ public:
 
 	virtual void CustomizeDetails(IDetailLayoutBuilder& DetailBuilder) override;
 	
+	void Add_Documentation_UI(IDetailLayoutBuilder& DetailBuilder);
 	void Add_API_UI(IDetailLayoutBuilder& DetailBuilder);
 	void AddAppInfoUI(IDetailLayoutBuilder& DetailBuilder);
 	void AddContainerUI(IDetailLayoutBuilder& DetailBuilder);
@@ -80,7 +81,7 @@ public:
 
 	static void SaveAll();
 	static void AddMessageLog(const FText& Text, const FText& Detail, const FString& TutorialLink, const FString& DocumentationLink);
-	static void Containerize(FString DockerFilePath, FString ServerBuildPath, FString RegistryURL, FString ImageRepository, FString Tag, FString PrivateUsername, FString PrivateToken);
+	static void Containerize(FString DockerFilePath, FString StartScriptPath, FString ServerBuildPath, FString RegistryURL, FString ImageRepository, FString Tag, FString PrivateUsername, FString PrivateToken);
 	static void PushContainer(FString ImageName, FString RegistryURL, FString PrivateUsername, FString PrivateToken, bool LoggedIn=false);
 	static void DockerLogin(FString RegistryURL, FString PrivateUsername, FString PrivateToken);
 	static void CreateApp(FString AppName, FString ImagePath, FString API_key);
